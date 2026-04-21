@@ -52,7 +52,7 @@ jobs:
       uses: aws-actions/amazon-ecs-render-task-definition@v1
       with:
         task-definition: task-definition.json
-        container-name: backend # Ensure this matches your ECS Task ID container name
+        container-name: Main # Matches the name in your ECS Task Definition
         image: ${{ steps.build-image.outputs.image }}
 
     - name: Deploy Amazon ECS task definition
