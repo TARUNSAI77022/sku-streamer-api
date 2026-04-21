@@ -46,6 +46,8 @@ jobs:
     - name: Download task definition
       run: |
         aws ecs describe-task-definition --task-definition ${{ env.ECS_SERVICE }} --query taskDefinition > task-definition.json
+        # Remove incompatible keys that cause deployment to fail
+        jq 'del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy, .enableFaultInjection)' task-definition.json > temp.json && mv temp.json task-definition.json
 
     - name: Fill in the new image ID in the Amazon ECS task definition
       id: task-def
