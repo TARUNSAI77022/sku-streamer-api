@@ -24,7 +24,15 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
-// Health Check Endpoint (For AWS Monitoring)
+/**
+ * @swagger
+ * /api/health:
+ *   get:
+ *     summary: Get service health status
+ *     responses:
+ *       200:
+ *         description: Service is healthy
+ */
 router.get('/health', (req, res) => {
   res.status(200).json({ 
     status: 'ok', 
@@ -33,7 +41,24 @@ router.get('/health', (req, res) => {
   });
 });
 
-// POST /upload
+/**
+ * @swagger
+ * /api/upload:
+ *   post:
+ *     summary: Upload an Excel file for SKU processing
+ *     requestBody:
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               file:
+ *                 type: string
+ *                 format: binary
+ *     responses:
+ *       200:
+ *         description: Upload processed successfully
+ */
 router.post('/upload', upload.single('file'), async (req, res) => {
   try {
     if (!req.file) {
@@ -114,7 +139,26 @@ router.post('/upload', upload.single('file'), async (req, res) => {
   }
 });
 
-// GET /sku-uploads with Pagination and Projection
+/**
+ * @swagger
+ * /api/sku-uploads:
+ *   get:
+ *     summary: Get all processed SKU uploads with pagination
+ *     parameters:
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *         description: Page number
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *         description: Records per page
+ *     responses:
+ *       200:
+ *         description: List of upload records
+ */
 router.get('/sku-uploads', async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
