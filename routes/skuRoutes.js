@@ -8,6 +8,8 @@ const SKU = require('../models/SKU');
 const Category = require('../models/Category');
 const UOM = require('../models/UOM');
 const SKUUpload = require('../models/SKUUpload');
+const Job = require('../models/Job');
+const { v4: uuidv4 } = require('uuid');
 
 // Multer setup
 const storage = multer.diskStorage({
@@ -23,6 +25,31 @@ const storage = multer.diskStorage({
   }
 });
 const upload = multer({ storage });
+
+/**
+ * @swagger
+ * /api/jobs/{jobId}:
+ *   get:
+ *     summary: Get the status of a specific background job
+ *     parameters:
+ *       - in: path
+ *         name: jobId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Job status retrieved
+ */
+router.get('/jobs/:jobId', async (req, res) => {
+  try {
+    const job = await Job.findOne({ jobId: req.params.jobId });
+    if (!job) return res.status(404).json({ message: 'Job not found' });
+    res.json(job);
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching job status', error: error.message });
+  }
+});
 
 /**
  * @swagger
@@ -65,76 +92,103 @@ router.post('/upload', upload.single('file'), async (req, res) => {
       return res.status(400).json({ message: 'Please upload an Excel file.' });
     }
 
-    // Parse Excel
+    const jobId = uuidv4();
     const workbook = xlsx.readFile(req.file.path);
     const sheetName = workbook.SheetNames[0];
     const rows = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName]);
     const totalRows = rows.length;
 
-    // Fetch master data for validation
-    const [skus, categories, uoms] = await Promise.all([
-      SKU.find({}, 'skuId').lean(),
-      Category.find({}, 'categoryId').lean(),
-      UOM.find({}, 'uomCode').lean()
-    ]);
-
-    const skuSet = new Set(skus.map(s => s.skuId));
-    const catSet = new Set(categories.map(c => c.categoryId));
-    const uomSet = new Set(uoms.map(u => u.uomCode));
-
-    for (let i = 0; i < totalRows; i++) {
-      const row = rows[i];
-      const skuId = (row.SKU || '').toString();
-      const catId = (row.Category || '').toString();
-      const uomCode = (row.UOM || '').toString();
-
-      let errors = [];
-      if (!skuSet.has(skuId)) errors.push('Invalid SKU');
-      if (!catSet.has(catId)) errors.push('Category Not Found');
-      if (!uomSet.has(uomCode)) errors.push('UOM Not Found');
-
-      const isValid = errors.length === 0;
-
-      const recordData = {
-        clientName: row.ClientName || 'N/A',
-        skuId: skuId,
-        skuName: row.SKUName || 'N/A',
-        categoryId: catId,
-        uomCode: uomCode,
-        weight: Number(row.Weight) || 0,
-        status: isValid ? 'VALID' : 'INVALID',
-        error: isValid ? null : errors.join(' / ')
-      };
-
-      // 1-BY-1 SAVE: Save this specific row to MongoDB Atlas immediately
-      const savedRecord = await SKUUpload.create(recordData);
-
-      // 1-BY-1 EMIT: Send this row and current progress to UI immediately
-      const progress = Math.round(((i + 1) / totalRows) * 100);
-      req.io.emit('uploadProgress', { 
-        progress, 
-        currentRow: i + 1, 
-        totalRows,
-        newRecords: [savedRecord] // Send as an array so frontend logic still works
-      });
-      
-      console.log(`[1-by-1] Saved & Emitted Row ${i+1}/${totalRows}: ${skuId}`);
-    }
-
-    // Cleanup
-    if (fs.existsSync(req.file.path)) {
-      fs.unlinkSync(req.file.path);
-    }
-
-    res.json({
-      message: 'Upload processed successfully',
-      totalRows: totalRows,
-      valid: uploadRecords.filter(r => r.status === 'VALID').length,
-      invalid: uploadRecords.filter(r => r.status === 'INVALID').length
+    // Create the Job record in DB
+    const job = await Job.create({
+      jobId,
+      status: 'PROCESSING',
+      totalRows,
+      fileName: req.file.originalname
     });
 
+    // Send immediate response
+    res.json({ message: 'Upload started', jobId, totalRows });
+
+    // BACKGROUND PROCESSING START
+    (async () => {
+      try {
+        const [skus, categories, uoms] = await Promise.all([
+          SKU.find({}, 'skuId').lean(),
+          Category.find({}, 'categoryId').lean(),
+          UOM.find({}, 'uomCode').lean()
+        ]);
+
+        const skuSet = new Set(skus.map(s => s.skuId));
+        const catSet = new Set(categories.map(c => c.categoryId));
+        const uomSet = new Set(uoms.map(u => u.uomCode));
+
+        let validCount = 0;
+        let invalidCount = 0;
+
+        for (let i = 0; i < totalRows; i++) {
+          const row = rows[i];
+          const skuId = (row.SKU || '').toString();
+          const catId = (row.Category || '').toString();
+          const uomCode = (row.UOM || '').toString();
+
+          let errors = [];
+          if (!skuSet.has(skuId)) errors.push('Invalid SKU');
+          if (!catSet.has(catId)) errors.push('Category Not Found');
+          if (!uomSet.has(uomCode)) errors.push('UOM Not Found');
+
+          const isValid = errors.length === 0;
+          if (isValid) validCount++; else invalidCount++;
+
+          const recordData = {
+            clientName: row.ClientName || 'N/A',
+            skuId: skuId,
+            skuName: row.SKUName || 'N/A',
+            categoryId: catId,
+            uomCode: uomCode,
+            weight: Number(row.Weight) || 0,
+            status: isValid ? 'VALID' : 'INVALID',
+            error: isValid ? null : errors.join(' / ')
+          };
+
+          // Save row
+          const savedRecord = await SKUUpload.create(recordData);
+
+          // Update Job progress in DB every 50 rows (to avoid overworking DB) or at the end
+          const progress = Math.round(((i + 1) / totalRows) * 100);
+          if ((i + 1) % 50 === 0 || i === totalRows - 1) {
+            await Job.findOneAndUpdate({ jobId }, { 
+              progress, 
+              processedRows: i + 1,
+              result: { valid: validCount, invalid: invalidCount }
+            });
+          }
+
+          // Emit progress via WebSocket (using room based on jobId)
+          req.io.to(jobId).emit('uploadProgress', { 
+            jobId,
+            progress, 
+            currentRow: i + 1, 
+            totalRows,
+            newRecords: [savedRecord]
+          });
+        }
+
+        // Finalize Job
+        await Job.findOneAndUpdate({ jobId }, { status: 'COMPLETED' });
+        console.log(`✅ [Job ${jobId}] Completed successfully.`);
+
+        // Cleanup file
+        if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+
+      } catch (bgError) {
+        console.error(`❌ [Job ${jobId}] Background Error:`, bgError);
+        await Job.findOneAndUpdate({ jobId }, { status: 'FAILED', error: bgError.message });
+      }
+    })();
+    // BACKGROUND PROCESSING END
+
   } catch (error) {
-    console.error('Error processing upload:', error);
+    console.error('Error starting upload:', error);
     res.status(500).json({ message: 'Internal Server Error', error: error.message });
   }
 });

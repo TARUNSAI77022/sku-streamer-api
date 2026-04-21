@@ -19,6 +19,19 @@ const io = new Server(server, {
   }
 });
 
+io.on('connection', (socket) => {
+  console.log('User connected:', socket.id);
+  
+  socket.on('joinJob', (jobId) => {
+    socket.join(jobId);
+    console.log(`User ${socket.id} joined job room: ${jobId}`);
+  });
+
+  socket.on('disconnect', () => {
+    console.log('User disconnected');
+  });
+});
+
 // Middleware
 app.use(cors());
 app.use(express.json());
