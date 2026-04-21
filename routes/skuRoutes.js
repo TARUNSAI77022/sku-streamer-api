@@ -165,7 +165,7 @@ router.post('/upload', upload.single('file'), async (req, res) => {
           if ((i + 1) % 50 === 0 || i === totalRows - 1) {
             await Job.findOneAndUpdate({ jobId }, { 
               progress, 
-              processedRows: i + 1,
+              currentRow: i + 1,
               result: { valid: validCount, invalid: invalidCount }
             });
           }
@@ -249,6 +249,31 @@ router.get('/sku-uploads', async (req, res) => {
         pages: Math.ceil(total / limit)
       }
     });
+  } catch (error) {
+    res.status(500).json({ message: 'Internal Server Error', error: error.message });
+  }
+});
+
+/**
+ * @swagger
+ * /api/jobs/{jobId}:
+ *   get:
+ *     summary: Get status of a background upload job
+ *     parameters:
+ *       - in: path
+ *         name: jobId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Job status and progress
+ */
+router.get('/jobs/:jobId', async (req, res) => {
+  try {
+    const job = await Job.findOne({ jobId: req.params.jobId });
+    if (!job) return res.status(404).json({ message: 'Job not found' });
+    res.json(job);
   } catch (error) {
     res.status(500).json({ message: 'Internal Server Error', error: error.message });
   }
