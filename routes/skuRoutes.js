@@ -24,6 +24,15 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
+// Health Check Endpoint (For AWS Monitoring)
+router.get('/health', (req, res) => {
+  res.status(200).json({ 
+    status: 'ok', 
+    service: 'sku-streamer-api',
+    timestamp: new Date().toISOString() 
+  });
+});
+
 // POST /upload
 router.post('/upload', upload.single('file'), async (req, res) => {
   try {
