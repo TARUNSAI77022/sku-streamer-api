@@ -9,6 +9,7 @@ env:
   ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
   ECS_SERVICE: ${{ secrets.ECS_SERVICE }}
   ECS_CLUSTER: ${{ secrets.ECS_CLUSTER }}
+  ECS_TASK_DEFINITION: ${{ secrets.ECS_TASK_DEFINITION }}
 
 jobs:
   deploy:
@@ -45,7 +46,7 @@ jobs:
 
     - name: Download task definition
       run: |
-        aws ecs describe-task-definition --task-definition ${{ env.ECS_SERVICE }} --query taskDefinition > task-definition.json
+        aws ecs describe-task-definition --task-definition ${{ env.ECS_TASK_DEFINITION }} --query taskDefinition > task-definition.json
         # Remove incompatible keys that cause deployment to fail
         jq 'del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy, .enableFaultInjection)' task-definition.json > temp.json && mv temp.json task-definition.json
 
