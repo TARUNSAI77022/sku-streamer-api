@@ -99,12 +99,19 @@ router.post('/upload', upload.single('file'), async (req, res) => {
     const totalRows = rows.length;
 
     // Create the Job record in DB
-    const job = await Job.create({
-      jobId,
-      status: 'PROCESSING',
-      totalRows,
-      fileName: req.file.originalname
-    });
+    let job;
+    try {
+      job = await Job.create({
+        jobId,
+        status: 'PROCESSING',
+        totalRows,
+        fileName: req.file.originalname
+      });
+      console.log(`📋 [DB] Created persistent Job: ${jobId} for file: ${req.file.originalname}`);
+    } catch (dbError) {
+      console.error(`❌ [DB] Failed to create Job record:`, dbError);
+      // We continue anyway, but this log will tell us WHY it's missing in your DB
+    }
 
     // Send immediate response
     res.json({ message: 'Upload started', jobId, totalRows });
