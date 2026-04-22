@@ -19,12 +19,32 @@ const io = new Server(server, {
   }
 });
 
+const Job = require('./models/Job');
+
 io.on('connection', (socket) => {
   console.log('User connected:', socket.id);
   
-  socket.on('joinJob', (jobId) => {
+  socket.on('joinJob', async (jobId) => {
     socket.join(jobId);
     console.log(`User ${socket.id} joined job room: ${jobId}`);
+
+    // Immediately send the latest state from DB upon joining
+    try {
+      const job = await Job.findOne({ jobId });
+      if (job) {
+        socket.emit('uploadProgress', {
+          jobId: job.jobId,
+          progress: job.progress,
+          currentRow: job.currentRow,
+          totalRows: job.totalRows,
+          status: job.status,
+          result: job.result
+        });
+        console.log(`📡 Sent catch-up data for Job ${jobId} to client ${socket.id}`);
+      }
+    } catch (err) {
+      console.error('❌ Error sending catch-up data:', err);
+    }
   });
 
   socket.on('disconnect', () => {
